@@ -1,0 +1,220 @@
+---
+title: "Restaurant Analysis"
+author: "Eric He"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Let's begin by reading in the csv files we got after transforming the data. If the inspection matrix and the identification matrix are already in the environment, this will rewrite them and fix a problem where the objects in the inspection matrix could not be listed or used for regressions. Also, there was a problem reading in the identification matrix using the normal read.csv function. A fix was found using the data.table library.
+
+```{r}
+inspectionMatrix <- read.csv("inspectionMatrix.csv")
+library("data.table")
+identificationMatrix <- fread("identificationMatrix.csv")
+dictionary <- fread("dictionary.csv")
+library("dplyr")
+```
+
+We want to join the two datasets together so that we can start running our models and our queries. They are joined by the "X" variable in the inspection matrix and the inspection ID variable in the identification matrix. We will have to remain the "X" variable of the inspection matrix first, however.
+
+```{r}
+setnames(inspectionMatrix, "X", "inspectionid")
+bigmatrix <- merge(inspectionMatrix, identificationMatrix, by = "inspectionid")
+```
+
+Let's take a look at how frequent each violation is. The output below shows the frequency of each violation. It looks like only a few violation codes make up the majority of all the violations in the original dataset; the first one, in particular, occurred over 50,000 times! Let's take a look at what they are.
+
+```{r}
+violations <- sort(colSums(inspectionMatrix[,-1]), decreasing = TRUE)
+barplot(violations, ylab = "Count of Violations", xlab = "Violation Code", main = "Distribution of Violations")
+barplot(violations[1:10], main = "Top 10 Violations", xlab = "Violation Code", ylab = "Violation Frequency")
+```
+
+The most common violation is 10F, which occurred 59,491 times in the dataset. This corresponds to "Non-food contact surface improperly constructed... improperly maintained." The second one is that the facility is not vermin-proof, which ties to the fourth most frequent violation, evidence of mice or live mice present in facility. The fourth violation occurred 29,735 times, or in 1 in every 5 inspections.
+
+```{r}
+interestingViolations <- filter(dictionary, RestaurantData.vcode == "10F" | RestaurantData.vcode == "08A" | RestaurantData.vcode == "02G" | RestaurantData.vcode == "04L" |RestaurantData.vcode == "02J" |RestaurantData.vcode == "03F" | RestaurantData.vcode == "05I" | RestaurantData.vcode == "15H")
+(interestingViolations[1:4,])
+```
+
+Here are the four least frequent violations. These look fairly obscure; the least frequent is 15H, sign prohibiting sale of tobacco products to minors not conspicuously posted. Other violations are technical ones, such as 02J, which talks about the required process of cooling reduced oxygen packaged foods. Only one restaurant failed to have the tobacco sign conspicuously posted, while three inspections failed to follow the correct cooling process (or perhaps the inspectors do not frequently check for proper cooling processes).
+
+```{r}
+tail(violations, 4)
+interestingViolations[5:8,]
+```
+
+The first model I'd like to run is a linear regression on restaurant points. How many points do certain violations earn? Are certain violations more likely to result in higher points? An explanation of restaurant inspections and points calculations given in the two links below do not reveal any illuminating information.
+
+https://www1.nyc.gov/assets/doh/downloads/pdf/rii/how-we-score-grade.pdf
+
+http://www1.nyc.gov/assets/doh/downloads/pdf/rii/blue-book.pdf
+
+```{r}
+model1 <- lm(bigmatrix$score ~ . - inspectionid, data = inspectionMatrix)
+summary(model1)
+```
+
+First things first; the model is extremely statistically significant, with the p-value having 0 out to at least 15 decimal places. The R-squared is 0.8529, meaning that 85.29% of the variance within the dataset can be attributable to the binary classification of which violations the restaurant committed. It's likely that the remaining 15% is attributable to the severity of the violation, since the inspector can choose to assign more points when he or she feels the violation was worse than usual. For example, a restaurant can have some rat droppings found around the facility, while another can have several scampering above the roof; the second one would likely get more points, since the degree of its violation is higher.
+
+There are many violations with negative predicted scores, which would run counter to our intuition. However, out of all thirteen violations which have negative predicted coefficients, only one is statistically significant at a 0.05 level. It is, however, very statistically significant, with a p-value of 0.007965. This is violation 18B, whose details are listed below.
+
+```{r}
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "18B"]
+```
+
+18B, which is associated with a points decrease of -3.4, is in fact the violation where the restaurant grade was "unlawfully reproduced or altered" by the restaurant! It seems highly unlikely that fraud is a benefit to a restaurant inspection, so we conclude that 18B was marked as significant due to the problem of multiple comparisons - in other words, random chance led to 18B being marked as statistically significant.
+
+The model was unable to generate a score for the violation 15H, which you might recall as having only occurred once. This is because the one inspection where 15H occurred was not scored. 
+
+```{r}
+filter(bigmatrix, X15H == 1)
+```
+
+An examination of the other negative violations shows that they disproportionately tend to be about signs not being posted. These violations do not seem to occur too often, which means it's possible the model does not have enough data to reach a collection. Other possible reasons for these strange coefficients include collinearity and multiple groups within the data (e.g. perhaps these violations tend to occur more often in one borough or for certain restaurant types).
+
+```{r}
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "15E"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "15I"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "15S"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "15T"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "16A"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "16E"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "18C"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "18F"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "20B"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "20E"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "22B"]
+dictionary$RestaurantData.vdescrip[dictionary$RestaurantData.vcode == "22G"]
+```
+
+Many of these violations did not occur very often, which is possibly why so many of them are not statistically significant, and have negative violations. 
+ 
+```{r}
+nrow(filter(bigmatrix, X15E == 1))
+nrow(filter(bigmatrix, X15I == 1))
+nrow(filter(bigmatrix, X15S == 1))
+nrow(filter(bigmatrix, X15T == 1))
+nrow(filter(bigmatrix, X16A == 1))
+nrow(filter(bigmatrix, X16E == 1))
+nrow(filter(bigmatrix, X18C == 1))
+nrow(filter(bigmatrix, X18F == 1))
+nrow(filter(bigmatrix, X20B == 1))
+nrow(filter(bigmatrix, X20E == 1))
+nrow(filter(bigmatrix, X22B == 1))
+nrow(filter(bigmatrix, X22G == 1))
+```
+
+Before the actual modeling begins, we had to clean the data a little bit more.
+
+```{r}
+bigmatrix2 <- bigmatrix
+bigmatrix2 <- filter(bigmatrix2, score > 0)
+#not sure why there are negative scores in the data but those got removed here
+bigmatrix2$grade[bigmatrix2$score < 14] <- "A"
+bigmatrix2$grade[bigmatrix2$score < 28 & bigmatrix2$score > 13] <- "B"
+bigmatrix2$grade[bigmatrix2$score > 27] <- "C"
+#assigning grades here for those which did not originally have them
+bigmatrix2$grade <- as.factor(bigmatrix2$grade)
+bigmatrix2$zipcode <- as.factor(bigmatrix2$zipcode)
+bigmatrix2$boro <- as.factor(bigmatrix2$boro)
+bigmatrix2$cdescrip <- as.factor(bigmatrix2$cdescrip)
+#formatting stuff here
+bigmatrix2 <- dplyr::select(bigmatrix2, -which(names(bigmatrix2) %in% c("building","gdate","idate","inspection","phone","street","V1", "name", "camis")))
+#trash the trash columns
+bigmatrix2 <- na.omit(bigmatrix2)
+#get rid of any NAs
+```
+
+We begin the modeling now by doing a 90-10 split into a training and test set. We want to fill in the grades for the many with the grade cell empty.
+
+```{r}
+set.seed(70)
+trainingrows <- sample(1:nrow(bigmatrix2), size = floor(0.9*nrow(bigmatrix2)))
+```
+
+```{r}
+training <- bigmatrix2[trainingrows,]
+test <- bigmatrix2[-trainingrows,]
+```
+
+Here is the linear regression on all relevant factors. Taking logs of score was tried but the residuals were clearly off. Zipcode was deemed not statistically significant so it was removed from the regression.
+
+```{r}
+linear <- lm(score ~ . - inspectionid - grade - zipcode, data = training)
+```
+
+Here are the classifications. We assume that the linear regression has well-calibrated predictions and use the numeric classifications given in the Department of Health page. This means that scores of 0-13 are classified as A's, 14-27 are classified as B's, and 28+ is classified as C.
+
+```{r}
+linearpredict <- predict(linear, newdata = test)
+linearpredict.class <- linearpredict
+linearpredict.class[linearpredict < 14] <- "A"
+linearpredict.class[linearpredict < 28 & linearpredict > 13] <- "B"
+linearpredict.class[linearpredict > 27] <- "C"
+linearevaluation <- linearpredict.class == test$grade
+table(Predicted = linearpredict.class, Actual = test$grade)
+```
+
+ROC curves are more difficult to build since there are 3 response outcomes: A, B, and C. It was not done for this project.
+
+```{r}
+library("e1071")
+```
+
+```{r}
+bayes <- naiveBayes(grade ~ . - inspectionid - score - zipcode, data = training)
+bayespredict <- predict(bayes, newdata = test)
+table(Predicted = bayespredict, Actual = test$grade)
+```
+```{r}
+bayes2Predict <- predict(bayes, newdata = test, type = "raw")
+```
+
+A polytomous logistic regression was made. However, even though the model converged, the predict function did not work. Here is the error:
+
+Error in X %*% object$coefficients : non-conformable arguments
+
+Thus, while a logistic regression model was created, we could not evaluate its performance.
+
+```{r}
+library("MASS")
+logit <- polr(grade ~ . - inspectionid - score - zipcode, data = training, Hess=TRUE)
+```
+
+Though classification trees and random forests were attempted in R, the software was unable to fit the models. Here are the error codes:
+
+For the tree:
+Error in rpart(grade ~ . - inspectionid - score - zipcode, data = training,  : 
+  NAs are not allowed in subscripted assignments
+  
+For the random forest:
+Error in randomForest.default(m, y, ...) : Can not handle categorical predictors with more than 53 categories.
+
+Thus, the data was exported to Weka to build the classification tree and random forest models. It should be noted that random forest in R refuses to deal with categorical predictors with more than 53 categories (in this case, the cdescrip or restaurant cuisine variable), since random forests perform poorly when these variables are present. Weka, however, ignored this and fit the model anyway. This is possibly why the random forest did not experience good performance.
+
+Here is the code to get the stuff right in Weka. After exporting the data, the csv files were converted to .arff files. The .arff files were edited using the text editor, WordPad, so that the variables were aligned and the Weka software could match up the features for the training and test sets to each other. The ID and score variables were deleted before exporting so that they would not be included in the models.
+
+During a final lookover of the models, it was discovered that the .arff files treated ZIP codes as numeric variables. This is a huge problem since ZIP codes are meant to be a categorical variable, but since the trees and the linear regression both did not regard ZIP codes as very important, it was left as is.
+
+```{r}
+training1 <- training
+training1 <- training1[-which(names(training1) %in% c("inspectionid", "score"))]
+training1$boro[training1$boro == "Missing"] <- NA
+training1 <- na.omit(training1)
+test1 <- test
+test1 <- test1[-which(names(test1) %in% c("inspectionid", "score"))]
+test1$boro[test1$boro == "Missing"] <- NA
+test1 <- na.omit(test1)
+training1$boro <- as.character(training1$boro)
+training1$boro <- as.factor(training1$boro)
+test1$boro <- as.character(test1$boro)
+test1$boro <- as.factor(test1$boro)
+write.csv(test1, file = "test.csv")
+write.csv(training1, file = "training.csv")
+```

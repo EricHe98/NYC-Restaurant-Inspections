@@ -1,0 +1,102 @@
+---
+title: "Restaurant Data"
+author: "Eric He"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Here's the restaurant data. It was taken from https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j/data on 3/2/17 with first data point having a CAMIS of 41618312 (Country Boyz Jerk Yard Restaurant).
+The source dataset updates in real time.
+
+The dataset records the violations a restaurant was found to be committing during an inspection. Each row corresponds to a different violation discovered within an inspection; the columns give information on the restaurant being inspected such as name, location, phone number, and cuisine as well as the date of the inspection and the specific violation and its description. Thus, a single inspection can have many different rows, since an inspection frequently turns up many violations. Moreover, a restaurant can be inspected several times across different dates, and there are many chain restaurants with the same name, but situated in different locations across the city. Thus, a single restaurant can correspond to hundreds of rows within the data!
+
+We are not interested in analyzing different violations, but in different restaurants. How do different restaurant classes perform in inspections? Are certain locations more prone to poor practices than others (inspection data may not be a good tool for this, since an area with harsher inspectors will have more violations recorded, but such an area may be better off because of it; domain knowledge is important here)? Are there food deserts within the city? 
+
+Our target classes of interest are the scores and grades of restaurants and restaurant inspections, but the current data is formatted by violations, not inspections or restaurants. Thus, we will have to transform the data before we begin our analysis.
+
+There was a fatal parse error in row 17 of the originally downloaded dataset due to an unreadable character, which had to be deleted.
+
+```{r}
+library(readr)
+RestaurantData <- read_csv("RestaurantData.csv")
+View(RestaurantData)
+```
+
+Here's a look at the data.
+
+```{r}
+head(RestaurantData)
+```
+
+Attach everything here.
+
+```{r}
+colnames(RestaurantData) <- c("camis", "name", "boro", "building", "street", "zipcode", "phone", "cdescrip", "idate", "action", "vcode", "vdescrip", "flag", "score", "grade", "gdate", "rdate", "type")
+attach(RestaurantData)
+```
+
+Create a new column which concatenates the restaurant name, borough, building, street, zipcode, and inspection date together to allow for identifying individual inspections.
+
+```{r}
+inspection <- paste(name, boro, paste(building, street, sep = " "), zipcode, idate, sep = ", ")
+RestaurantData <- data.frame(inspection, RestaurantData)
+inspectionid <- as.numeric(RestaurantData$inspection)
+RestaurantData <- data.frame(inspectionid, RestaurantData)
+rm(inspection, inspectionid)
+```
+
+Sort the data so that all rows corresponding to a single inspection are together.
+
+```{r}
+RestaurantData <- RestaurantData[order(RestaurantData$inspectionid, RestaurantData$score),]
+```
+
+Transform the data to allow for analysis.
+
+```{r}
+RestaurantData$boro <- as.factor(RestaurantData$boro)
+RestaurantData$cdescrip <- as.factor(RestaurantData$cdescrip)
+RestaurantData$idate <- as.Date(RestaurantData$idate, format = "%m/%d/%y")
+RestaurantData$vdescrip <- as.factor(RestaurantData$vdescrip)
+RestaurantData$vcode <- as.factor(RestaurantData$vcode)
+RestaurantData$grade <- as.factor(RestaurantData$grade)
+```
+
+Now that the data is properly ordered, we can build the datasets we need to perform our analysis. The first is the inspection matrix, a table where every row corresponds to a different inspection and every column corresponds to one of 93 possible violations the restaurant can commit.
+
+The second matrix we want is the identification matrix. Once again, each row of the matrix corresponds to a different inspection. The columns contain the relevant restaurant information.
+
+```{r}
+inspectionMatrix <- table(RestaurantData$inspectionid, RestaurantData$vcode)
+identificationMatrix <- RestaurantData[!duplicated(RestaurantData[,1]),]
+#remove rows with the same inspectionid
+identificationMatrix <- identificationMatrix[,-c(20, 19, 12:15)]
+#remove irrelevant columns
+head(inspectionMatrix)
+head(identificationMatrix)
+```
+
+The inspection matrix currently has columns corresponding to different violation codes. Let's build a dictionary for the violation codes.
+
+```{r}
+dictionary <- data.frame(RestaurantData$vcode, RestaurantData$vdescrip)
+dictionary <- unique(dictionary)
+dictionary <- dictionary[order(dictionary$RestaurantData.vcode),]
+dictionary <- dictionary[-nrow(dictionary),]
+#remove NA row
+head(dictionary)
+```
+
+We have tables for every different inspection. This data is excellent for analysis, so we can export them into csv files for further analysis.
+
+```{r}
+write.csv(inspectionMatrix, file = "inspectionMatrix.csv")
+write.csv(identificationMatrix, file = "identificationMatrix.csv")
+write.csv(dictionary, file = "dictionary.csv")
+write.csv(RestaurantData, file = "cleanedRestaurantData.csv")
+```
